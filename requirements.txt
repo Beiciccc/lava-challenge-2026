@@ -1,0 +1,8 @@
+pandas
+numpy
+scikit-learn
+pypdf
+pymupdf
+rank-bm25
+ocrmac
+pillow

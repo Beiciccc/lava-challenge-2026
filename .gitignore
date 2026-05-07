@@ -1,0 +1,19 @@
+.DS_Store
+._*
+__pycache__/
+.venv/
+tmp/
+logs/*.tmp
+
+# Large raw artifacts (downloadable from Kaggle)
+data/raw/*.zip
+data/raw/train_pdfs/
+data/raw/test_pdfs/
+
+# Environment / machine specific
+.kaggle/
+.env
+*.pyc
+
+# Optional large caches if present
+*.ipynb_checkpoints/
