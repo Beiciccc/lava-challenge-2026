@@ -17,3 +17,6 @@ data/raw/test_pdfs/
 
 # Optional large caches if present
 *.ipynb_checkpoints/
+
+# Non-pushable bulky generated file (contains long lines that trigger transport issues in this environment)
+data/processed/pdf_pages.jsonl
