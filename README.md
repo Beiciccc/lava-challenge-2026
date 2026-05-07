@@ -50,3 +50,17 @@ kaggle competitions submissions -c lava-challenge-2026 --csv --page-size 20
 ```bash
 kaggle competitions leaderboard -c lava-challenge-2026 --show --csv | head -n 2
 ```
+
+## GitHub 同步
+
+每次完成一次实验/提交产出后，执行：
+
+```bash
+bash scripts/sync_github.sh "chore: record experiment N"
+```
+
+脚本会同步本仓库的以下内容并推送到 `origin/main`：
+- `README.md`、`requirements.txt`、`.gitignore`
+- `scripts/` 与 `src/`
+- `logs/`、`reports/`、`submissions/`
+- `data/raw/` 与 `data/processed/` 中非忽略文件
