@@ -1,0 +1,39 @@
+#!/usr/bin/env expect
+set timeout 30
+
+if {![info exists env(SERVER_PASSWORD)]} {
+  puts stderr "SERVER_PASSWORD is required"
+  exit 1
+}
+if {$argc != 5} {
+  puts stderr "usage: authorize_remote_key.expect <user> <host> <port> <public_key_file> <remote_root>"
+  exit 1
+}
+
+set user [lindex $argv 0]
+set host [lindex $argv 1]
+set port [lindex $argv 2]
+set pubkey_file [lindex $argv 3]
+set remote_root [lindex $argv 4]
+
+set fh [open $pubkey_file r]
+set pubkey [string trim [read $fh]]
+close $fh
+
+set remote_cmd "mkdir -p ~/.ssh '$remote_root' && chmod 700 ~/.ssh && grep -qxF '$pubkey' ~/.ssh/authorized_keys 2>/dev/null || echo '$pubkey' >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo AUTHORIZED"
+
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive,publickey $user@$host $remote_cmd
+expect {
+  -re "password:" {
+    send "$env(SERVER_PASSWORD)\r"
+    exp_continue
+  }
+  -re "AUTHORIZED" {
+    puts "AUTHORIZED"
+  }
+  eof
+}
+catch wait result
+set code [lindex $result 3]
+exit $code
+
