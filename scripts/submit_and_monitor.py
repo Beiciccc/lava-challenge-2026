@@ -22,14 +22,26 @@ from typing import Any
 def run_kaggle_csv(args: list[str]) -> list[dict[str, str]]:
     """Run a Kaggle CLI command and parse CSV output."""
     cmd = ["kaggle", "competitions"] + args + ["--csv"]
-    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
-    rows: list[dict[str, str]] = []
-    reader = csv.DictReader(proc.stdout.splitlines())
-    for row in reader:
-        rows.append({k: (v if v is not None else "") for k, v in row.items()})
-    return rows
+    last_error = ""
+    for attempt in range(1, 4):
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            rows: list[dict[str, str]] = []
+            reader = csv.DictReader(proc.stdout.splitlines())
+            for row in reader:
+                rows.append({k: (v if v is not None else "") for k, v in row.items()})
+            return rows
+        last_error = proc.stderr.strip() or proc.stdout.strip()
+        if attempt < 3:
+            time.sleep(10 * attempt)
+    raise RuntimeError(last_error)
 
 
 def count_today_submissions(rows: Iterable[dict[str, str]], today: str) -> int:
@@ -40,6 +52,11 @@ def count_today_submissions(rows: Iterable[dict[str, str]], today: str) -> int:
         if date == today:
             total += 1
     return total
+
+
+def get_today_count(competition: str, today: str) -> tuple[int, list[dict[str, str]]]:
+    rows = run_kaggle_csv(["submissions", "-c", competition, "--page-size", "200"])
+    return count_today_submissions(rows, today), rows
 
 
 def latest_matching_submission(
@@ -130,13 +147,6 @@ def wait_for_result(
             public_score = row.get("publicScore", "")
             best_status = status
 
-        leaderboard = get_leaderboard_snapshot(competition)
-        team_entry = (
-            get_team_leaderboard_row(competition, team_name)
-            if team_name
-            else None
-        )
-
         payload = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "event": "poll",
@@ -146,9 +156,9 @@ def wait_for_result(
             "attempt": attempt,
             "status": status,
             "public_score": public_score,
-            "leaderboard_top_team": leaderboard["team_name"],
-            "leaderboard_top_score": leaderboard["top_score"],
-            "team_leaderboard": team_entry,
+            "leaderboard_top_team": "",
+            "leaderboard_top_score": "",
+            "team_leaderboard": None,
         }
         with logger.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -193,6 +203,11 @@ def append_run_log(
         "team_name": team_name or "",
         **result,
     }
+    with logger.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def append_event_log(logger: Path, payload: dict[str, Any]) -> None:
     with logger.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -248,9 +263,8 @@ def main() -> None:
     log_path = Path(args.log or f"logs/kaggle_submit_{datetime.now().strftime('%Y%m%d')}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    all_submissions = run_kaggle_csv(["submissions", "-c", args.competition, "--page-size", "200"])
     today = datetime.now().strftime("%Y-%m-%d")
-    today_count = count_today_submissions(all_submissions, today)
+    today_count, _ = get_today_count(args.competition, today)
     planned = len(args.files)
     if today_count + planned > args.max_daily:
         raise SystemExit(
@@ -265,9 +279,28 @@ def main() -> None:
         base = file_path_obj.name
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         message = f"{args.message_prefix}_{idx:02d}_{stamp}"
+        pre_count, _ = get_today_count(args.competition, today)
+        if pre_count >= args.max_daily:
+            raise SystemExit(
+                f"Quota exhausted before {base}: today={today} used={pre_count}/{args.max_daily}"
+            )
+        append_event_log(
+            log_path,
+            {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "event": "quota_before_submit",
+                "competition": args.competition,
+                "file": base,
+                "message": message,
+                "today": today,
+                "used": pre_count,
+                "max_daily": args.max_daily,
+                "remaining": args.max_daily - pre_count,
+            },
+        )
         print(
             f"[{idx}/{planned}] Submit {base} "
-            f"| today used: {today_count + idx - 1}/{args.max_daily}"
+            f"| quota before submit: {pre_count}/{args.max_daily}"
         )
 
         attempts_left = args.max_retries + 1
@@ -281,6 +314,30 @@ def main() -> None:
                     raise SystemExit(f"Submit failed for {base}: {exc}")
                 print(f"Submit failed, retrying ({attempts_left} left): {exc}")
                 time.sleep(20)
+
+        post_count, post_rows = get_today_count(args.competition, today)
+        accepted_row = latest_matching_submission(post_rows, base, message)
+        append_event_log(
+            log_path,
+            {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "event": "quota_after_submit",
+                "competition": args.competition,
+                "file": base,
+                "message": message,
+                "today": today,
+                "used": post_count,
+                "max_daily": args.max_daily,
+                "remaining": args.max_daily - post_count,
+                "accepted_by_kaggle": accepted_row is not None,
+                "accepted_status": (accepted_row or {}).get("status", ""),
+                "accepted_date": (accepted_row or {}).get("date", ""),
+            },
+        )
+        print(
+            f"Accepted by Kaggle={accepted_row is not None} "
+            f"| quota after submit: {post_count}/{args.max_daily}"
+        )
 
         result = wait_for_result(
             args.competition,
