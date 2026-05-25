@@ -50,8 +50,8 @@ def main() -> None:
             continue
         file_to_count[pdf.stem] = page_count(pdf)
 
-    id_to_file = dict(zip(test["id"], test["file_id"], strict=True))
-    id_to_fmt = dict(zip(test["id"], test["answer_format"], strict=True))
+    id_to_file = dict(zip(test["id"], test["file_id"]))
+    id_to_fmt = dict(zip(test["id"], test["answer_format"]))
 
     for _, row in sub.iterrows():
         qid = row["id"]
@@ -72,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
